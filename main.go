@@ -9,6 +9,7 @@ import (
     "path/filepath"
     "time"
 	"io"
+    "github.com/google/uuid" 
 )
 
 // ChatRequest represents the structure of the incoming request for chat
@@ -535,6 +536,263 @@ func listFilesHandler(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(ListFilesResponse{Files: fileInfos})
 }
+
+// ChatHistoryResponse represents the structure of the response for chat history
+type ChatHistoryResponse struct {
+    Files []string `json:"files"`
+}
+
+// Chat History Handler
+func chatHistoryHandler(w http.ResponseWriter, r *http.Request) {
+    enableCORS(w, r)
+
+    if r.Method != http.MethodGet {
+        http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+        return
+    }
+
+    // Define the path to the History directory
+    historyDir := filepath.Join(".", "History")
+
+    // Read the directory
+    files, err := os.ReadDir(historyDir)
+    if err != nil {
+        http.Error(w, "Failed to read History directory", http.StatusInternalServerError)
+        return
+    }
+
+    var jsonFiles []string
+    for _, file := range files {
+        if !file.IsDir() && filepath.Ext(file.Name()) == ".json" { // Only process JSON files
+            jsonFiles = append(jsonFiles, file.Name())
+        }
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(ChatHistoryResponse{Files: jsonFiles})
+}
+// CreateHistoryRequest represents the structure of the incoming request for creating history
+type CreateHistoryRequest struct {
+    AssistantTitle string `json:"assistantTitle"`
+}
+
+// CreateHistoryResponse represents the structure of the response for creating history
+type CreateHistoryResponse struct {
+    Message string `json:"message"`
+    FileID  string `json:"fileID"`
+}
+
+// Create History Handler
+// Create History Handler
+func createHistoryHandler(w http.ResponseWriter, r *http.Request) {
+    enableCORS(w, r)
+
+    if r.Method != http.MethodPost {
+        http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+        return
+    }
+
+    var createRequest CreateHistoryRequest
+    err := json.NewDecoder(r.Body).Decode(&createRequest)
+    if err != nil || createRequest.AssistantTitle == "" {
+        http.Error(w, "Bad request", http.StatusBadRequest)
+        return
+    }
+
+    var historyDir string
+    if createRequest.AssistantTitle == "Lets Chat" {
+        // Create the History folder in the root directory
+        historyDir = filepath.Join(".", "History")
+    } else {
+        // Create the History folder in the specific assistant's directory
+        historyDir = filepath.Join("assistants", createRequest.AssistantTitle, "History")
+    }
+
+    // Create the History directory if it doesn't exist
+    err = os.MkdirAll(historyDir, os.ModePerm)
+    if err != nil {
+        http.Error(w, "Failed to create History directory", http.StatusInternalServerError)
+        return
+    }
+
+    // Generate a unique ID for the JSON file
+    fileID := uuid.New().String()
+    jsonFilePath := filepath.Join(historyDir, fileID+".json")
+
+    // Create an empty JSON file
+    err = os.WriteFile(jsonFilePath, []byte("{}"), os.ModePerm)
+    if err != nil {
+        http.Error(w, "Failed to create JSON file", http.StatusInternalServerError)
+        return
+    }
+
+    // Respond with success message and file ID
+    w.WriteHeader(http.StatusCreated)
+    json.NewEncoder(w).Encode(CreateHistoryResponse{
+        Message: "History file created successfully",
+        FileID:  fileID,
+    })
+}
+
+// DeleteHistoryRequest represents the structure of the incoming request for deleting history
+type DeleteHistoryRequest struct {
+    AssistantTitle string `json:"assistantTitle"`
+    ChatHistoryID  string `json:"chatHistoryID"`
+}
+
+// DeleteHistoryResponse represents the structure of the response for deleting history
+type DeleteHistoryResponse struct {
+    Message string `json:"message"`
+}
+
+// Delete History Handler
+func deleteHistoryHandler(w http.ResponseWriter, r *http.Request) {
+    enableCORS(w, r)
+
+    if r.Method != http.MethodDelete {
+        http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+        return
+    }
+
+    var deleteRequest DeleteHistoryRequest
+    err := json.NewDecoder(r.Body).Decode(&deleteRequest)
+    if err != nil || deleteRequest.AssistantTitle == "" || deleteRequest.ChatHistoryID == "" {
+        http.Error(w, "Bad request", http.StatusBadRequest)
+        return
+    }
+
+    var historyDir string
+    if deleteRequest.AssistantTitle == "Lets Chat" {
+        // Use the root History folder
+        historyDir = filepath.Join(".", "History")
+    } else {
+        // Use the assistant's History folder
+        historyDir = filepath.Join("assistants", deleteRequest.AssistantTitle, "History")
+    }
+
+    // Construct the full path to the JSON file
+    jsonFilePath := filepath.Join(historyDir, deleteRequest.ChatHistoryID+".json")
+
+    // Delete the JSON file
+    err = os.Remove(jsonFilePath)
+    if err != nil {
+        http.Error(w, "Failed to delete history file", http.StatusInternalServerError)
+        return
+    }
+
+    // Respond with success message
+    w.WriteHeader(http.StatusOK)
+    json.NewEncoder(w).Encode(DeleteHistoryResponse{Message: "History file deleted successfully"})
+}
+
+// UpdateChatContextRequest represents the structure of the incoming request for updating chat context
+type UpdateChatContextRequest struct {
+    AssistantTitle string `json:"assistantTitle"`
+    Context        string `json:"context"`
+}
+
+// UpdateChatContextResponse represents the structure of the response for updating chat context
+type UpdateChatContextResponse struct {
+    Message string `json:"message"`
+}
+
+// Update Chat Context Handler
+func updateChatContextHandler(w http.ResponseWriter, r *http.Request) {
+    enableCORS(w, r)
+
+    if r.Method != http.MethodPut {
+        http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+        return
+    }
+
+    // Extract the history ID from the URL
+    historyID := filepath.Base(r.URL.Path)
+    if historyID == "" {
+        http.Error(w, "History ID is required", http.StatusBadRequest)
+        return
+    }
+
+    var updateRequest UpdateChatContextRequest
+    err := json.NewDecoder(r.Body).Decode(&updateRequest)
+    if err != nil || updateRequest.AssistantTitle == "" || updateRequest.Context == "" {
+        http.Error(w, "Bad request", http.StatusBadRequest)
+        return
+    }
+
+    var historyDir string
+    if updateRequest.AssistantTitle == "Lets Chat" {
+        // Use the root History folder
+        historyDir = filepath.Join(".", "History")
+    } else {
+        // Use the assistant's History folder
+        historyDir = filepath.Join("assistants", updateRequest.AssistantTitle, "History")
+    }
+
+    // Construct the full path to the JSON file
+    jsonFilePath := filepath.Join(historyDir, historyID+".json")
+
+    // Update the JSON file with the new context
+    err = os.WriteFile(jsonFilePath, []byte(updateRequest.Context), os.ModePerm)
+    if err != nil {
+        http.Error(w, "Failed to update chat context", http.StatusInternalServerError)
+        return
+    }
+
+    // Respond with success message
+    w.WriteHeader(http.StatusOK)
+    json.NewEncoder(w).Encode(UpdateChatContextResponse{Message: "Chat context updated successfully"})
+}
+// FetchHistoryRequest represents the structure of the incoming request for fetching history data
+type FetchHistoryRequest struct {
+    AssistantTitle string `json:"assistantTitle"`
+    HistoryID      string `json:"historyID"`
+}
+
+// FetchHistoryResponse represents the structure of the response for fetching history data
+type FetchHistoryResponse struct {
+    Context string `json:"context"`
+}
+
+// Fetch History Handler
+func fetchHistoryHandler(w http.ResponseWriter, r *http.Request) {
+    enableCORS(w, r)
+
+    if r.Method != http.MethodPost {
+        http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+        return
+    }
+
+    var fetchRequest FetchHistoryRequest
+    err := json.NewDecoder(r.Body).Decode(&fetchRequest)
+    if err != nil || fetchRequest.AssistantTitle == "" || fetchRequest.HistoryID == "" {
+        http.Error(w, "Bad request", http.StatusBadRequest)
+        return
+    }
+
+    var historyDir string
+    if fetchRequest.AssistantTitle == "Lets Chat" {
+        // Use the root History folder
+        historyDir = filepath.Join(".", "History")
+    } else {
+        // Use the assistant's History folder
+        historyDir = filepath.Join("assistants", fetchRequest.AssistantTitle, "History")
+    }
+
+    // Construct the full path to the JSON file
+    jsonFilePath := filepath.Join(historyDir, fetchRequest.HistoryID+".json")
+
+    // Read the JSON file
+    data, err := os.ReadFile(jsonFilePath)
+    if err != nil {
+        http.Error(w, "Failed to read history file", http.StatusInternalServerError)
+        return
+    }
+
+    // Respond with the file content
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(FetchHistoryResponse{Context: string(data)})
+}
+
 func main() {
     http.HandleFunc("/chat", chatHandler)
     http.HandleFunc("/createAssistant", createAssistantHandler)
@@ -549,5 +807,10 @@ func main() {
 	http.HandleFunc("/delete-knowledgebase", deleteDirectoryHandler)   
 	http.HandleFunc("/rename-knowledgebase", renameDirectoryHandler)  
 	http.HandleFunc("/list-files-knowledgebase", listFilesHandler)  
+	http.HandleFunc("/chat-history", chatHistoryHandler)  
+	http.HandleFunc("/create-history", createHistoryHandler)  
+	http.HandleFunc("/delete-history", deleteHistoryHandler) 
+	http.HandleFunc("/update-chat-context/", updateChatContextHandler) 
+	http.HandleFunc("/fetch-history", fetchHistoryHandler)     
     http.ListenAndServe(":8080", nil)
 }
